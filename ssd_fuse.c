@@ -192,14 +192,36 @@ static unsigned int get_next_pca()
 
 static int ftl_read(char* buf, size_t lba)
 {
-    // find PCA -> nand_read
-    // TODO
+    int size;
+    PCA_RULE my_pca;
+
+    // find PCA from L2P
+    my_pca.pca = L2P[lba];
+
+    if (my_pca.pca == INVALID_PCA)
+    {
+        return 0;
+    }
+
+    size = nand_read(buf, my_pca.pca);
+    return size;
 }
 
 static int ftl_write(const char* buf, size_t lba_rnage, size_t lba)
 {
-    // no align -> nand_read -> nand_write
-    // TODO
+    int size, pca;
+
+    pca = get_next_pca();
+
+    if (pca == OUT_OF_BLOCK || pca == -EINVAL)
+    {
+        return 0;
+    }
+
+    size = nand_write(buf, pca);
+    L2P[lba] = pca;
+
+    return size;
 }
 
 
