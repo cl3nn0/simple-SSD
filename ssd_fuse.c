@@ -82,9 +82,9 @@ static int nand_read(char* buf, int pca)
     snprintf(nand_name, 100, "%s/nand_%d", NAND_LOCATION, my_pca.fields.nand);
 
     //read
-    if ( (fptr = fopen(nand_name, "r") ))
+    if ((fptr = fopen(nand_name, "r")))
     {
-        fseek( fptr, my_pca.fields.lba * 512, SEEK_SET );
+        fseek(fptr, my_pca.fields.lba * 512, SEEK_SET);
         fread(buf, 1, 512, fptr);
         fclose(fptr);
     }
@@ -105,9 +105,9 @@ static int nand_write(const char* buf, int pca)
     snprintf(nand_name, 100, "%s/nand_%d", NAND_LOCATION, my_pca.fields.nand);
 
     //write
-    if ( (fptr = fopen(nand_name, "r+")))
+    if ((fptr = fopen(nand_name, "r+")))
     {
-        fseek( fptr, my_pca.fields.lba * 512, SEEK_SET );
+        fseek(fptr, my_pca.fields.lba * 512, SEEK_SET);
         fwrite(buf, 1, 512, fptr);
         fclose(fptr);
         physic_size ++;
@@ -190,7 +190,7 @@ static unsigned int get_next_pca()
 }
 
 
-static int ftl_read( char* buf, size_t lba)
+static int ftl_read(char* buf, size_t lba)
 {
     // find PCA -> nand_read
     // TODO
@@ -254,11 +254,11 @@ static int ssd_do_read(char* buf, size_t size, off_t offset)
     char* tmp_buf;
 
     //off limit
-    if ((offset ) >= logic_size)
+    if ((offset) >= logic_size)
     {
         return 0;
     }
-    if ( size > logic_size - offset)
+    if (size > logic_size - offset)
     {
         //is valid data section
         size = logic_size - offset;

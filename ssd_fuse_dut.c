@@ -41,8 +41,8 @@ static int do_rw(FILE* fd, int is_read, size_t size, off_t offset)
     if (is_read)
     {
         printf("dut do read size %ld, off %d\n", size, (int)offset);
-        fseek( fd, offset, SEEK_SET );
-        ret = fread( buf, 1, size, fd);
+        fseek(fd, offset, SEEK_SET);
+        ret = fread(buf, 1, size, fd);
         if (ret >= 0)
         {
             fwrite(buf, 1, ret, stdout);
@@ -50,12 +50,12 @@ static int do_rw(FILE* fd, int is_read, size_t size, off_t offset)
     }
     else
     {
-        for ( idx = 0; idx < size; idx++)
+        for (idx = 0; idx < size; idx++)
         {
             buf[idx] = idx;
         }
         printf("dut do write size %ld, off %d\n", size, (int)offset);
-        fseek( fd, offset, SEEK_SET );
+        fseek(fd, offset, SEEK_SET);
         printf("fseek \n");
         ret = fwrite(buf, 1, size, fd);
         //arg.size = fread(arg.buf, 1, size, stdin);
@@ -130,7 +130,7 @@ int main(int argc, char** argv)
             return 0;
         case 'r':
         case 'w':
-            if ( !(fptr = fopen(path, "r+")))
+            if (!(fptr = fopen(path, "r+")))
             {
                 perror("open");
                 return 1;
