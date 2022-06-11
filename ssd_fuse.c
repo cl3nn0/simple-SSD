@@ -294,7 +294,7 @@ static int ssd_do_read(char* buf, size_t size, off_t offset)
 
     for (int i = 0; i < tmp_lba_range; i++)
     {
-        ret = ftl_read(tmp_buf[i * 512], tmp_lba + i);
+        ret = ftl_read(&tmp_buf[i * 512], tmp_lba + i);
         if (ret < 0)
         {
             return -1;
@@ -338,8 +338,8 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
     curr_size = 0;
     for (idx = 0; idx < tmp_lba_range; idx++)
     {
-        // call ftl
-        // TODO
+        // TODO read-modify-write
+        rst = ftl_write(&buf[idx * 512], 0, tmp_lba + idx);
     }
     return size;
 }
