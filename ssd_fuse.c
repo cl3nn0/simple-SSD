@@ -95,6 +95,7 @@ static int nand_read(char* buf, int pca)
     }
     return 512;
 }
+
 static int nand_write(const char* buf, int pca)
 {
     char nand_name[100];
@@ -154,6 +155,7 @@ static unsigned int get_next_block()
     }
     return OUT_OF_BLOCK;
 }
+
 static unsigned int get_next_pca()
 {
     if (curr_pca.pca == INVALID_PCA)
@@ -189,7 +191,6 @@ static unsigned int get_next_pca()
 
 }
 
-
 static int ftl_read(char* buf, size_t lba)
 {
     int size;
@@ -207,7 +208,7 @@ static int ftl_read(char* buf, size_t lba)
     return size;
 }
 
-static int ftl_write(const char* buf, size_t lba_rnage, size_t lba)
+static int ftl_write(const char* buf, size_t lba_range, size_t lba)
 {
     int size, pca;
 
@@ -224,8 +225,6 @@ static int ftl_write(const char* buf, size_t lba_rnage, size_t lba)
     return size;
 }
 
-
-
 static int ssd_file_type(const char* path)
 {
     if (strcmp(path, "/") == 0)
@@ -238,6 +237,7 @@ static int ssd_file_type(const char* path)
     }
     return SSD_NONE;
 }
+
 static int ssd_getattr(const char* path, struct stat* stbuf,
                        struct fuse_file_info* fi)
 {
@@ -261,6 +261,7 @@ static int ssd_getattr(const char* path, struct stat* stbuf,
     }
     return 0;
 }
+
 static int ssd_open(const char* path, struct fuse_file_info* fi)
 {
     (void) fi;
@@ -270,9 +271,10 @@ static int ssd_open(const char* path, struct fuse_file_info* fi)
     }
     return -ENOENT;
 }
+
 static int ssd_do_read(char* buf, size_t size, off_t offset)
 {
-    int tmp_lba, tmp_lba_range, rst ;
+    int tmp_lba, tmp_lba_range, ret;
     char* tmp_buf;
 
     //off limit
@@ -292,16 +294,19 @@ static int ssd_do_read(char* buf, size_t size, off_t offset)
 
     for (int i = 0; i < tmp_lba_range; i++)
     {
-        // call ftl
-        // TODO
+        ret = ftl_read(tmp_buf[i * 512], tmp_lba + i);
+        if (ret < 0)
+        {
+            return -1;
+        }
     }
 
     memcpy(buf, tmp_buf + offset % 512, size);
 
-    
     free(tmp_buf);
     return size;
 }
+
 static int ssd_read(const char* path, char* buf, size_t size,
                     off_t offset, struct fuse_file_info* fi)
 {
@@ -312,6 +317,7 @@ static int ssd_read(const char* path, char* buf, size_t size,
     }
     return ssd_do_read(buf, size, offset);
 }
+
 static int ssd_do_write(const char* buf, size_t size, off_t offset)
 {
     int tmp_lba, tmp_lba_range, process_size;
@@ -337,6 +343,7 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
     }
     return size;
 }
+
 static int ssd_write(const char* path, const char* buf, size_t size,
                      off_t offset, struct fuse_file_info* fi)
 {
@@ -348,6 +355,7 @@ static int ssd_write(const char* path, const char* buf, size_t size,
     }
     return ssd_do_write(buf, size, offset);
 }
+
 static int ssd_truncate(const char* path, off_t size,
                         struct fuse_file_info* fi)
 {
@@ -364,6 +372,7 @@ static int ssd_truncate(const char* path, off_t size,
 
     return ssd_resize(size);
 }
+
 static int ssd_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
                        off_t offset, struct fuse_file_info* fi,
                        enum fuse_readdir_flags flags)
@@ -380,6 +389,7 @@ static int ssd_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
     filler(buf, SSD_NAME, NULL, 0, 0);
     return 0;
 }
+
 static int ssd_ioctl(const char* path, unsigned int cmd, void* arg,
                      struct fuse_file_info* fi, unsigned int flags, void* data)
 {
@@ -406,6 +416,7 @@ static int ssd_ioctl(const char* path, unsigned int cmd, void* arg,
     }
     return -EINVAL;
 }
+
 static const struct fuse_operations ssd_oper =
 {
     .getattr        = ssd_getattr,
@@ -416,6 +427,7 @@ static const struct fuse_operations ssd_oper =
     .write          = ssd_write,
     .ioctl          = ssd_ioctl,
 };
+
 int main(int argc, char* argv[])
 {
     int idx;
