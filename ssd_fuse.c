@@ -152,6 +152,7 @@ static int nand_erase(int block_index)
     {
         pages_status[block_index][i] = 0;
     }
+    free_block_number += 1;
     return 1;
 }
 
@@ -193,6 +194,7 @@ void garbage_collection()
     if (min_valid == PAGE_PER_BLOCK)
     {
         printf("[ERROR] NO MORE SPACE in GC\n");
+        return;
     }
 
     buf = calloc(512, sizeof(char));
@@ -212,13 +214,13 @@ void garbage_collection()
             if (ret <= 0)
             {
                 printf("[ERROR] FAIL TO READ in GC\n");
-                return 0;
+                return;
             }
             ret = nand_write(buf, curr_pca.pca);
             if (ret <= 0)
             {
                 printf("[ERROR] FAIL TO WRITE in GC\n");
-                return 0;
+                return;
             }
 
             lba = P2L[PCA_ADDR(my_pca.pca)];
@@ -234,10 +236,10 @@ void garbage_collection()
     if (ret <= 0)
     {
         printf("[ERROR] FAIL TO ERASE in GC\n");
-        return 0;
+        return;
     }
     gc_blockid = blockid;
-    return 0;
+    return;
 }
 
 static unsigned int get_next_pca()
