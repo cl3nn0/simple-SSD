@@ -171,6 +171,75 @@ static unsigned int get_next_block()
     return OUT_OF_BLOCK;
 }
 
+void garbage_collection()
+{
+    int blockid, min_valid, lba, ret;
+    char *buf;
+    PCA_RULE my_pca;
+
+    blockid = -1;
+    min_valid = PAGE_PER_BLOCK + 1;
+
+    for (int i = 0; i < PHYSICAL_NAND_NUM; i++)
+    {
+        if (valid_count[i] < min_valid)
+        {
+            min_valid = valid_count[i];
+            blockid = i;
+        }
+    }
+
+    // no space
+    if (min_valid == PAGE_PER_BLOCK)
+    {
+        printf("[ERROR] NO MORE SPACE in GC\n");
+    }
+
+    buf = calloc(512, sizeof(char));
+    // my_pca = block that will be erase
+    my_pca.fields.nand = blockid;
+    // curr_pca = GC_block (prev last block)
+    curr_pca.fields.nand = gc_blockid;
+    curr_pca.fields.lba = 0;
+
+    for (int i = 0; i < PAGE_PER_BLOCK; i++)
+    {
+        // page is valid
+        if (pages_status[blockid][i] == 1)
+        {
+            my_pca.fields.lba = i;
+            ret = nand_read(buf, my_pca.pca);
+            if (ret <= 0)
+            {
+                printf("[ERROR] FAIL TO READ in GC\n");
+                return 0;
+            }
+            ret = nand_write(buf, curr_pca.pca);
+            if (ret <= 0)
+            {
+                printf("[ERROR] FAIL TO WRITE in GC\n");
+                return 0;
+            }
+
+            lba = P2L[PCA_ADDR(my_pca.pca)];
+            L2P[lba] = curr_pca.pca;
+            P2L[PCA_ADDR(curr_pca.pca)] = lba;
+            P2L[PCA_ADDR(my_pca.pca)] = INVALID_LBA;
+            
+            curr_pca.fields.lba += 1;
+        }
+    }
+    free(buf);
+    ret = nand_erase(blockid);
+    if (ret <= 0)
+    {
+        printf("[ERROR] FAIL TO ERASE in GC\n");
+        return 0;
+    }
+    gc_blockid = blockid;
+    return 0;
+}
+
 static unsigned int get_next_pca()
 {
     if (curr_pca.pca == INVALID_PCA)
@@ -185,11 +254,13 @@ static unsigned int get_next_pca()
     if(curr_pca.fields.lba == 9)
     {
         // when curr_block is full & number of free block == 1
-        // do garbage collection until number of free block >= 2
-        // while (free_block_number == 1)
-        // {
-        //     garbage_collection();
-        // }
+        // do garbage collection
+        if (free_block_number == 1)
+        {
+            garbage_collection();
+            return curr_pca.pca;
+        }
+
         int temp = get_next_block();
         if (temp == OUT_OF_BLOCK)
         {
@@ -364,6 +435,7 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
     // if offset in free page
     if (pages_status[tmp_block][tmp_page] == 0)
     {
+        printf("=========================In free page\n");
         memcpy(tmp_buf, buf, size);
         for (int i = 0; i < tmp_lba_range; i++)
         {
@@ -379,6 +451,7 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
     // if offset in valid page => Read-Modify-Write
     else if (pages_status[tmp_block][tmp_page] == 1)
     {
+        printf("=========================In v page\n");
         int invalid_cnt = tmp_lba_range;
         // read
         ret = ftl_read(tmp_buf, tmp_lba);
@@ -422,6 +495,7 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
     // if offset in invalid page
     else if (pages_status[tmp_block][tmp_page] == 2)
     {
+        printf("=========================In Iv page\n");
         memcpy(tmp_buf, buf, size);
         // find next free page
         while (pages_status[tmp_block][tmp_page] >= 1)
