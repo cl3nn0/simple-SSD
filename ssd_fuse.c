@@ -195,7 +195,7 @@ void garbage_collection()
 
     for (int i = 0; i < PAGE_PER_BLOCK; i++)
     {
-        // ?
+        // Not Sure ?
         my_pca.fields.lba = i;
         int my_lba = P2L[my_pca.fields.lba + my_pca.fields.nand * PAGE_PER_BLOCK];
         // set INVALID_PCA
@@ -404,17 +404,30 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
 
     tmp_lba = offset / 512;
     tmp_lba_range = (offset + size - 1) / 512 - (tmp_lba) + 1;
+    // prev => remember prev_len
+    int prev = 0;
 
     for (idx = 0; idx < tmp_lba_range; idx++)
     {
+        // size = 512, last page may < 512
         int tmp_size = 512;
-        if (idx == tmp_lba_range - 1 && size % 512 != 0)
+        if (idx == tmp_lba_range - 1 && (size + (offset % 512)) % 512 != 0)
         {
-            tmp_size = size % 512;
+            tmp_size = (size + offset) % 512;
         }
+        // prev_len = 0, first page may > 0
+        int prev_len = 0;
+        if (idx == 0)
+        {
+            prev_len = offset % 512;
+            prev = prev_len;
+        }
+        // alloc tmp_buf, 512 * null bytes
         tmp_buf = calloc(512, sizeof(char));
         // check L2P to get PCA
         int tmp_pca = L2P[tmp_lba + idx];
+
+        printf("prev = %d, prev_len = %d, tmp_size = %d, buf_idx = %d, memcpy_size = %d\n", prev, prev_len, tmp_size, idx * 512 - prev, tmp_size - prev_len);
         // if page is valid => RMW
         if (tmp_pca != INVALID_PCA)
         {
@@ -427,12 +440,16 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
                 return 0;
             }
             // modify
-            int prev_len = 0;
-            if (idx == 0)
+            // special case (idx > 0)
+            if (prev != prev_len)
             {
-                prev_len = offset % 512;
+                memcpy(&tmp_buf[prev_len], &buf[idx * 512 - prev], tmp_size - prev_len);
             }
-            memcpy(&tmp_buf[prev_len], &buf[idx * 512], tmp_size);
+            // nomral case (idx = 0)
+            else
+            {
+                memcpy(&tmp_buf[prev_len], &buf[idx * 512], tmp_size - prev_len);
+            }
             // write
             ret = ftl_write(tmp_buf, tmp_lba_range - idx, tmp_lba + idx);
             if (ret <= 0)
@@ -448,7 +465,16 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
         // if page is free
         else
         {
-            memcpy(tmp_buf, &buf[idx * 512], tmp_size);
+            // special case (idx > 0)
+            if (prev != prev_len)
+            {
+                memcpy(&tmp_buf[prev_len], &buf[idx * 512 - prev], tmp_size - prev_len);
+            }
+            // nomral case (idx = 0)
+            else
+            {
+                memcpy(&tmp_buf[prev_len], &buf[idx * 512], tmp_size - prev_len);
+            }
             ret = ftl_write(tmp_buf, tmp_lba_range - idx, tmp_lba + idx);
             if (ret <= 0)
             {
