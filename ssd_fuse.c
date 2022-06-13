@@ -169,9 +169,6 @@ void garbage_collection()
     erase_block_idx = -1;
     min_valid = PAGE_PER_BLOCK + 1;
 
-    curr_pca.fields.nand = gc_block_idx;
-    curr_pca.fields.lba = 0;
-
     for (int i = 0; i < PHYSICAL_NAND_NUM; i++)
     {
         if (valid_count[i] < min_valid)
@@ -187,6 +184,12 @@ void garbage_collection()
         return;
     }
 
+    // set gc_block_idx to curr_block
+    curr_pca.fields.nand = gc_block_idx;
+    curr_pca.fields.lba = 0;
+    free_block_number--;
+    valid_count[curr_pca.fields.nand] = 0;
+
     buf = calloc(512, sizeof(char));
     my_pca.fields.nand = erase_block_idx;
 
@@ -195,6 +198,8 @@ void garbage_collection()
         // ?
         my_pca.fields.lba = i;
         int my_lba = P2L[my_pca.fields.lba + my_pca.fields.nand * PAGE_PER_BLOCK];
+        // set INVALID_PCA
+        L2P[my_lba] = INVALID_PCA;
         // if this LBA is valid
         if (my_lba != INVALID_LBA)
         {
