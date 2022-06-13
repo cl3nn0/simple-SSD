@@ -16,9 +16,11 @@
 #include <errno.h>
 #include "ssd_fuse_header.h"
 #define SSD_NAME "ssd_file"
-// lba  = page  = low 16 bits
-// nand = block = high 16 bits
-#define PCA_ADDR(pca) ((pca & 0xffff) + ((pca >> 16) * PAGE_PER_BLOCK))
+/*
+    lba  = page  = low 16 bits
+    nand = block = high 16 bits
+*/
+#define PCA_IDX(pca) ((pca & 0xffff) + ((pca >> 16) * PAGE_PER_BLOCK))
 
 enum
 {
@@ -26,13 +28,6 @@ enum
     SSD_ROOT,
     SSD_FILE,
 };
-
-/*
-    0 = free
-    1 = valid
-    2 = invalid
-*/
-int pages_status[PHYSICAL_NAND_NUM][PAGE_PER_BLOCK];
 
 static size_t physic_size;
 static size_t logic_size;
@@ -53,7 +48,7 @@ union pca_rule
 PCA_RULE curr_pca;
 static unsigned int get_next_pca();
 
-unsigned int* L2P,* P2L,* valid_count, free_block_number, gc_blockid;
+unsigned int* L2P,* P2L,* valid_count, free_block_number, gc_block_idx;
 
 static int ssd_resize(size_t new_size)
 {
@@ -121,8 +116,6 @@ static int nand_write(const char* buf, int pca)
         fclose(fptr);
         physic_size++;
         valid_count[my_pca.fields.nand]++;
-        // set this page status -> 1
-        pages_status[my_pca.fields.nand][my_pca.fields.lba] = 1;
     }
     else
     {
@@ -147,12 +140,7 @@ static int nand_erase(int block_index)
     }
     fclose(fptr);
     valid_count[block_index] = FREE_BLOCK;
-    // set the status of the pages of this block -> 0
-    for (int i = 0; i < PAGE_PER_BLOCK; i++)
-    {
-        pages_status[block_index][i] = 0;
-    }
-    free_block_number += 1;
+    free_block_number++;
     return 1;
 }
 
@@ -172,76 +160,6 @@ static unsigned int get_next_block()
     return OUT_OF_BLOCK;
 }
 
-void garbage_collection()
-{
-    int blockid, min_valid, lba, ret;
-    char *buf;
-    PCA_RULE my_pca;
-
-    blockid = -1;
-    min_valid = PAGE_PER_BLOCK + 1;
-
-    for (int i = 0; i < PHYSICAL_NAND_NUM; i++)
-    {
-        if (valid_count[i] < min_valid)
-        {
-            min_valid = valid_count[i];
-            blockid = i;
-        }
-    }
-
-    // no space
-    if (min_valid == PAGE_PER_BLOCK)
-    {
-        printf("[ERROR] NO MORE SPACE in GC\n");
-        return;
-    }
-
-    buf = calloc(512, sizeof(char));
-    // my_pca = block that will be erase
-    my_pca.fields.nand = blockid;
-    // curr_pca = GC_block (prev last block)
-    curr_pca.fields.nand = gc_blockid;
-    curr_pca.fields.lba = 0;
-
-    for (int i = 0; i < PAGE_PER_BLOCK; i++)
-    {
-        // page is valid
-        if (pages_status[blockid][i] == 1)
-        {
-            my_pca.fields.lba = i;
-            ret = nand_read(buf, my_pca.pca);
-            if (ret <= 0)
-            {
-                printf("[ERROR] FAIL TO READ in GC\n");
-                return;
-            }
-            ret = nand_write(buf, curr_pca.pca);
-            if (ret <= 0)
-            {
-                printf("[ERROR] FAIL TO WRITE in GC\n");
-                return;
-            }
-
-            lba = P2L[PCA_ADDR(my_pca.pca)];
-            L2P[lba] = curr_pca.pca;
-            P2L[PCA_ADDR(curr_pca.pca)] = lba;
-            P2L[PCA_ADDR(my_pca.pca)] = INVALID_LBA;
-            
-            curr_pca.fields.lba += 1;
-        }
-    }
-    free(buf);
-    ret = nand_erase(blockid);
-    if (ret <= 0)
-    {
-        printf("[ERROR] FAIL TO ERASE in GC\n");
-        return;
-    }
-    gc_blockid = blockid;
-    return;
-}
-
 static unsigned int get_next_pca()
 {
     if (curr_pca.pca == INVALID_PCA)
@@ -255,13 +173,11 @@ static unsigned int get_next_pca()
 
     if(curr_pca.fields.lba == 9)
     {
-        // when curr_block is full & number of free block == 1
-        // do garbage collection
-        if (free_block_number == 1)
-        {
-            garbage_collection();
-            return curr_pca.pca;
-        }
+        // if curr_block is full & free_block_number == 1 => GC
+        // if (free_block_number == 1)
+        // {
+
+        // }
 
         int temp = get_next_block();
         if (temp == OUT_OF_BLOCK)
@@ -286,10 +202,10 @@ static unsigned int get_next_pca()
 
 static int ftl_read(char* buf, size_t lba)
 {
-    int size;
+    int ret;
     PCA_RULE my_pca;
 
-    // find PCA from L2P
+    // check L2P to get PCA
     my_pca.pca = L2P[lba];
 
     if (my_pca.pca == INVALID_PCA)
@@ -298,27 +214,27 @@ static int ftl_read(char* buf, size_t lba)
         return 0;
     }
 
-    size = nand_read(buf, my_pca.pca);
-    return size;
+    ret = nand_read(buf, my_pca.pca);
+    return ret;
 }
 
 static int ftl_write(const char* buf, size_t lba_range, size_t lba)
 {
-    int size, pca;
+    int ret, pca;
 
     pca = get_next_pca();
 
     if (pca == OUT_OF_BLOCK || pca == -EINVAL)
     {
-        printf("[ERROR] INVALID_PCA in ftl_write\n");
+        printf("[ERROR] FAIL TO get_next_pca() in ftl_write\n");
         return 0;
     }
 
-    size = nand_write(buf, pca);
+    ret = nand_write(buf, pca);
     L2P[lba] = pca;
-    P2L[PCA_ADDR(pca)] = lba;
+    P2L[PCA_IDX(pca)] = lba;
 
-    return size;
+    return ret;
 }
 
 static int ssd_file_type(const char* path)
@@ -393,7 +309,8 @@ static int ssd_do_read(char* buf, size_t size, off_t offset)
         ret = ftl_read(&tmp_buf[i * 512], tmp_lba + i);
         if (ret <= 0)
         {
-            return 0;
+            printf("[ERROR] FAIL TO ftl_read() in ssd_do_read\n");
+            return -1;
         }
     }
 
@@ -416,7 +333,8 @@ static int ssd_read(const char* path, char* buf, size_t size,
 
 static int ssd_do_write(const char* buf, size_t size, off_t offset)
 {
-    int tmp_lba, tmp_lba_range, ret;
+    int tmp_lba, tmp_lba_range;
+    int idx, ret;
     char* tmp_buf;
 
     host_write_size += size;
@@ -428,97 +346,60 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
     tmp_lba = offset / 512;
     tmp_lba_range = (offset + size - 1) / 512 - (tmp_lba) + 1;
 
-    // use tmp_lba to find block & page
-    int tmp_block, tmp_page;
-    tmp_block = tmp_lba / PAGE_PER_BLOCK;
-    tmp_page = tmp_lba % PAGE_PER_BLOCK;
-
-    tmp_buf = calloc(tmp_lba_range * 512, sizeof(char));
-    // if offset in free page
-    if (pages_status[tmp_block][tmp_page] == 0)
+    for (idx = 0; idx < tmp_lba_range; idx++)
     {
-        printf("=========================In free page\n");
-        memcpy(tmp_buf, buf, size);
-        for (int i = 0; i < tmp_lba_range; i++)
+        int tmp_size = 512;
+        if (idx == tmp_lba_range - 1 && size % 512 != 0)
         {
-            ret = ftl_write(&tmp_buf[i * 512], tmp_lba_range - i, tmp_lba + i);
+            tmp_size = size % 512;
+        }
+        tmp_buf = calloc(512, sizeof(char));
+        // check L2P to get PCA
+        int tmp_pca = L2P[tmp_lba + idx];
+        // if page is valid => RMW
+        if (tmp_pca != INVALID_PCA)
+        {
+            // read
+            ret = ftl_read(tmp_buf, tmp_lba + idx);
             if (ret <= 0)
             {
-                printf("[ERROR] FAIL TO WRITE IN ssd_do_write (offset in free page)\n");
+                printf("[ERROR] FAIL TO ftl_read() in ssd_do_write\n");
+                free(tmp_buf);
+                return 0;
+            }
+            // modify
+            int prev_len = 0;
+            if (idx == 0)
+            {
+                prev_len = offset % 512;
+            }
+            memcpy(&tmp_buf[prev_len], &buf[idx * 512], tmp_size);
+            // write
+            ret = ftl_write(tmp_buf, tmp_lba_range - idx, tmp_lba + idx);
+            if (ret <= 0)
+            {
+                printf("[ERROR] FAIL TO ftl_write() in ssd_do_write (valid page)\n");
+                free(tmp_buf);
+                return 0;
+            }
+            // valid count of this block - 1
+            valid_count[tmp_pca >> 16]--;
+            P2L[PCA_IDX(tmp_pca)] = INVALID_LBA;
+        }
+        // if page is free
+        else
+        {
+            memcpy(tmp_buf, &buf[idx * 512], tmp_size);
+            ret = ftl_write(tmp_buf, tmp_lba_range - idx, tmp_lba + idx);
+            if (ret <= 0)
+            {
+                printf("[ERROR] FAIL TO ftl_write() in ssd_do_write (free page)\n");
                 free(tmp_buf);
                 return 0;
             }
         }
+        free(tmp_buf);
     }
-    // if offset in valid page => Read-Modify-Write
-    else if (pages_status[tmp_block][tmp_page] == 1)
-    {
-        printf("=========================In v page\n");
-        int invalid_cnt = tmp_lba_range;
-        // read
-        ret = ftl_read(tmp_buf, tmp_lba);
-        if (ret <= 0)
-        {
-            printf("[ERROR] FAIL TO READ IN ssd_do_write (offset in valid page)\n");
-            free(tmp_buf);
-            return 0;
-        }
-        // modify
-        int prev_len = offset % 512;
-        memset(&tmp_buf[prev_len], 0, 512);
-        memcpy(&tmp_buf[prev_len], buf, size);
-        // write
-        // find next free page
-        while (pages_status[tmp_block][tmp_page] >= 1)
-        {
-            // set invalid
-            if (invalid_cnt > 0)
-            {
-                pages_status[tmp_block][tmp_page] = 2;
-            }
-            invalid_cnt -= 1;
-            // next page
-            tmp_lba += 1;
-            tmp_block = tmp_lba / PAGE_PER_BLOCK;
-            tmp_page = tmp_lba % PAGE_PER_BLOCK;
-        }
-        // tmp_lba = next free page => we can write
-        for (int i = 0; i < tmp_lba_range; i++)
-        {
-            ret = ftl_write(&tmp_buf[i * 512], tmp_lba_range - i, tmp_lba + i);
-            if (ret <= 0)
-            {
-                printf("[ERROR] FAIL TO WRITE IN ssd_do_write (offset in valid page)\n");
-                free(tmp_buf);
-                return 0;
-            }
-        }
-    }
-    // if offset in invalid page
-    else if (pages_status[tmp_block][tmp_page] == 2)
-    {
-        printf("=========================In Iv page\n");
-        memcpy(tmp_buf, buf, size);
-        // find next free page
-        while (pages_status[tmp_block][tmp_page] >= 1)
-        {
-            tmp_lba += 1;
-            tmp_block = tmp_lba / PAGE_PER_BLOCK;
-            tmp_page = tmp_lba % PAGE_PER_BLOCK;
-        }
-        // tmp_lba = next free page => we can write
-        for (int i = 0; i < tmp_lba_range; i++)
-        {
-            ret = ftl_write(&tmp_buf[i * 512], tmp_lba_range - i, tmp_lba + i);
-            if (ret <= 0)
-            {
-                printf("[ERROR] FAIL TO WRITE IN ssd_do_write (offset in invalid page)\n");
-                free(tmp_buf);
-                return 0;
-            }
-        }
-    }
-    free(tmp_buf);
     return size;
 }
 
@@ -543,16 +424,8 @@ static int ssd_truncate(const char* path, off_t size,
     memset(valid_count, FREE_BLOCK, sizeof(int) * PHYSICAL_NAND_NUM);
     curr_pca.pca = INVALID_PCA;
     free_block_number = PHYSICAL_NAND_NUM;
-    // reset all pages status & gc_blockid
-    for (int i = 0; i < PHYSICAL_NAND_NUM; i++)
-    {
-        for (int j = 0; j < PAGE_PER_BLOCK; j++)
-        {
-            pages_status[i][j] = 0;
-        }
-    }
-    gc_blockid = PHYSICAL_NAND_NUM - 1;
-
+    // init gc_block index
+    gc_block_idx = PHYSICAL_NAND_NUM - 1;
     if (ssd_file_type(path) != SSD_FILE)
     {
         return -EINVAL;
@@ -624,14 +497,8 @@ int main(int argc, char* argv[])
     logic_size = 0;
     curr_pca.pca = INVALID_PCA;
     free_block_number = PHYSICAL_NAND_NUM;
-    gc_blockid = PHYSICAL_NAND_NUM - 1;
-    for (int i = 0; i < PHYSICAL_NAND_NUM; i++)
-    {
-        for (int j = 0; j < PAGE_PER_BLOCK; j++)
-        {
-            pages_status[i][j] = 0;
-        }
-    }
+    // init gc_block index
+    gc_block_idx = PHYSICAL_NAND_NUM - 1;
 
     L2P = malloc(LOGICAL_NAND_NUM * PAGE_PER_BLOCK * sizeof(int));
     memset(L2P, INVALID_PCA, sizeof(int) * LOGICAL_NAND_NUM * PAGE_PER_BLOCK);
