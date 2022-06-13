@@ -160,6 +160,59 @@ static unsigned int get_next_block()
     return OUT_OF_BLOCK;
 }
 
+void garbage_collection()
+{
+    int erase_block_idx, min_valid;
+    char *buf;
+    PCA_RULE my_pca;
+
+    erase_block_idx = -1;
+    min_valid = PAGE_PER_BLOCK + 1;
+
+    curr_pca.fields.nand = gc_block_idx;
+    curr_pca.fields.lba = 0;
+
+    for (int i = 0; i < PHYSICAL_NAND_NUM; i++)
+    {
+        if (valid_count[i] < min_valid)
+        {
+            min_valid = valid_count[i];
+            erase_block_idx = i;
+        }
+    }
+
+    if (min_valid == PAGE_PER_BLOCK)
+    {
+        printf("[WARNING] NO MORE SPACE in garbage_collection\n");
+        return;
+    }
+
+    buf = calloc(512, sizeof(char));
+    my_pca.fields.nand = erase_block_idx;
+
+    for (int i = 0; i < PAGE_PER_BLOCK; i++)
+    {
+        // ?
+        my_pca.fields.lba = i;
+        int my_lba = P2L[my_pca.fields.lba + my_pca.fields.nand * PAGE_PER_BLOCK];
+        // if this LBA is valid
+        if (my_lba != INVALID_LBA)
+        {
+            nand_read(buf, my_pca.pca);
+            nand_write(buf, curr_pca.pca);
+            L2P[my_lba] = curr_pca.pca;
+            P2L[PCA_IDX(curr_pca.pca)] = my_lba;
+            P2L[PCA_IDX(my_pca.pca)] = INVALID_LBA;
+            curr_pca.fields.lba += 1;
+        }
+    }
+
+    free(buf);
+    nand_erase(erase_block_idx);
+    gc_block_idx = erase_block_idx;
+    return;
+}
+
 static unsigned int get_next_pca()
 {
     if (curr_pca.pca == INVALID_PCA)
@@ -174,10 +227,11 @@ static unsigned int get_next_pca()
     if(curr_pca.fields.lba == 9)
     {
         // if curr_block is full & free_block_number == 1 => GC
-        // if (free_block_number == 1)
-        // {
-
-        // }
+        if (free_block_number == 1)
+        {
+            garbage_collection();
+            return curr_pca.pca;
+        }
 
         int temp = get_next_block();
         if (temp == OUT_OF_BLOCK)
