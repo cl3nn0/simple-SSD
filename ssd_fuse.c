@@ -267,10 +267,11 @@ static int ftl_read(char* buf, size_t lba)
     // check L2P to get PCA
     my_pca.pca = L2P[lba];
 
+    // RMW==
     if (my_pca.pca == INVALID_PCA)
     {
-        printf("[ERROR] INVALID_PCA in ftl_read\n");
-        return 0;
+        printf("[WARNING] INVALID_PCA in ftl_read\n");
+        return 512;
     }
 
     ret = nand_read(buf, my_pca.pca);
@@ -427,7 +428,6 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
         // check L2P to get PCA
         int tmp_pca = L2P[tmp_lba + idx];
 
-        printf("prev = %d, prev_len = %d, tmp_size = %d, buf_idx = %d, memcpy_size = %d\n", prev, prev_len, tmp_size, idx * 512 - prev, tmp_size - prev_len);
         // if page is valid => RMW
         if (tmp_pca != INVALID_PCA)
         {
