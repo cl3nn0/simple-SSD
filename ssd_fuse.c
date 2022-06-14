@@ -34,6 +34,8 @@ static size_t logic_size;
 static size_t host_write_size;
 static size_t nand_write_size;
 
+int check_overwrite_pca = INVALID_PCA;
+
 typedef union pca_rule PCA_RULE;
 union pca_rule
 {
@@ -48,7 +50,7 @@ union pca_rule
 PCA_RULE curr_pca;
 static unsigned int get_next_pca();
 
-unsigned int* L2P,* P2L,* valid_count, free_block_number, gc_block_idx;
+unsigned int* L2P,* P2L,* valid_count, free_block_number;
 
 static int ssd_resize(size_t new_size)
 {
@@ -144,33 +146,22 @@ static int nand_erase(int block_index)
     return 1;
 }
 
-static unsigned int get_next_block()
-{
-    for (int i = 0; i < PHYSICAL_NAND_NUM; i++)
-    {
-        if (valid_count[(curr_pca.fields.nand + i) % PHYSICAL_NAND_NUM] == FREE_BLOCK)
-        {
-            curr_pca.fields.nand = (curr_pca.fields.nand + i) % PHYSICAL_NAND_NUM;
-            curr_pca.fields.lba = 0;
-            free_block_number--;
-            valid_count[curr_pca.fields.nand] = 0;
-            return curr_pca.pca;
-        }
-    }
-    return OUT_OF_BLOCK;
-}
-
 void garbage_collection()
 {
     int erase_block_idx, min_valid;
     char *buf;
-    PCA_RULE my_pca;
+    PCA_RULE erase_pca;
 
     erase_block_idx = -1;
     min_valid = PAGE_PER_BLOCK + 1;
 
     for (int i = 0; i < PHYSICAL_NAND_NUM; i++)
     {
+        // prevent for erase the block that is BEING overwritten or curr_GC_block
+        if (i == (check_overwrite_pca >> 16) || i == curr_pca.fields.nand)
+        {
+            continue;
+        }
         if (valid_count[i] < min_valid)
         {
             min_valid = valid_count[i];
@@ -184,35 +175,48 @@ void garbage_collection()
         return;
     }
 
-    // set gc_block_idx to curr_block
-    curr_pca.fields.nand = gc_block_idx;
-    curr_pca.fields.lba = 0;
-    free_block_number--;
-    valid_count[curr_pca.fields.nand] = 0;
-
     buf = calloc(512, sizeof(char));
-    my_pca.fields.nand = erase_block_idx;
+    erase_pca.fields.nand = erase_block_idx;
 
     for (int i = 0; i < PAGE_PER_BLOCK; i++)
     {
-        my_pca.fields.lba = i;
-        int my_lba = P2L[my_pca.fields.lba + my_pca.fields.nand * PAGE_PER_BLOCK];
+        erase_pca.fields.lba = i;
+        int my_lba = P2L[erase_pca.fields.lba + erase_pca.fields.nand * PAGE_PER_BLOCK];
         // if this LBA is valid
         if (my_lba != INVALID_LBA)
         {
-            nand_read(buf, my_pca.pca);
+            nand_read(buf, erase_pca.pca);
             nand_write(buf, curr_pca.pca);
             L2P[my_lba] = curr_pca.pca;
             P2L[PCA_IDX(curr_pca.pca)] = my_lba;
-            P2L[PCA_IDX(my_pca.pca)] = INVALID_LBA;
             curr_pca.fields.lba += 1;
         }
+        P2L[PCA_IDX(erase_pca.pca)] = INVALID_LBA;
     }
 
     free(buf);
     nand_erase(erase_block_idx);
-    gc_block_idx = erase_block_idx;
     return;
+}
+
+static unsigned int get_next_block()
+{
+    for (int i = 0; i < PHYSICAL_NAND_NUM; i++)
+    {
+        if (valid_count[(curr_pca.fields.nand + i) % PHYSICAL_NAND_NUM] == FREE_BLOCK)
+        {
+            curr_pca.fields.nand = (curr_pca.fields.nand + i) % PHYSICAL_NAND_NUM;
+            curr_pca.fields.lba = 0;
+            free_block_number--;
+            valid_count[curr_pca.fields.nand] = 0;
+            if (free_block_number == 0)
+            {
+                garbage_collection();
+            }
+            return curr_pca.pca;
+        }
+    }
+    return OUT_OF_BLOCK;
 }
 
 static unsigned int get_next_pca()
@@ -228,13 +232,6 @@ static unsigned int get_next_pca()
 
     if(curr_pca.fields.lba == 9)
     {
-        // if curr_block is full & free_block_number == 1 => GC
-        if (free_block_number == 1)
-        {
-            garbage_collection();
-            return curr_pca.pca;
-        }
-
         int temp = get_next_block();
         if (temp == OUT_OF_BLOCK)
         {
@@ -264,7 +261,7 @@ static int ftl_read(char* buf, size_t lba)
     // check L2P to get PCA
     my_pca.pca = L2P[lba];
 
-    // RMW==
+    // ?????
     if (my_pca.pca == INVALID_PCA)
     {
         printf("[WARNING] INVALID_PCA in ftl_read\n");
@@ -428,6 +425,7 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
         // if page is valid => RMW
         if (tmp_pca != INVALID_PCA)
         {
+            check_overwrite_pca = tmp_pca;
             // read
             ret = ftl_read(tmp_buf, tmp_lba + idx);
             if (ret <= 0)
@@ -455,8 +453,10 @@ static int ssd_do_write(const char* buf, size_t size, off_t offset)
                 free(tmp_buf);
                 return 0;
             }
+            check_overwrite_pca = INVALID_PCA;
             // valid count of this block - 1
-            valid_count[tmp_pca >> 16]--;
+            if (valid_count[tmp_pca >> 16] > 0)
+                valid_count[tmp_pca >> 16]--;
             P2L[PCA_IDX(tmp_pca)] = INVALID_LBA;
         }
         // if page is free
@@ -506,8 +506,6 @@ static int ssd_truncate(const char* path, off_t size,
     memset(valid_count, FREE_BLOCK, sizeof(int) * PHYSICAL_NAND_NUM);
     curr_pca.pca = INVALID_PCA;
     free_block_number = PHYSICAL_NAND_NUM;
-    // init gc_block index
-    gc_block_idx = PHYSICAL_NAND_NUM - 1;
     if (ssd_file_type(path) != SSD_FILE)
     {
         return -EINVAL;
@@ -579,8 +577,6 @@ int main(int argc, char* argv[])
     logic_size = 0;
     curr_pca.pca = INVALID_PCA;
     free_block_number = PHYSICAL_NAND_NUM;
-    // init gc_block index
-    gc_block_idx = PHYSICAL_NAND_NUM - 1;
 
     L2P = malloc(LOGICAL_NAND_NUM * PAGE_PER_BLOCK * sizeof(int));
     memset(L2P, INVALID_PCA, sizeof(int) * LOGICAL_NAND_NUM * PAGE_PER_BLOCK);
