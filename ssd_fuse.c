@@ -195,11 +195,8 @@ void garbage_collection()
 
     for (int i = 0; i < PAGE_PER_BLOCK; i++)
     {
-        // Not Sure ?
         my_pca.fields.lba = i;
         int my_lba = P2L[my_pca.fields.lba + my_pca.fields.nand * PAGE_PER_BLOCK];
-        // set INVALID_PCA
-        L2P[my_lba] = INVALID_PCA;
         // if this LBA is valid
         if (my_lba != INVALID_LBA)
         {
