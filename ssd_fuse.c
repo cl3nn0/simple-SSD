@@ -261,7 +261,6 @@ static int ftl_read(char* buf, size_t lba)
     // check L2P to get PCA
     my_pca.pca = L2P[lba];
 
-    // ?????
     if (my_pca.pca == INVALID_PCA)
     {
         printf("[WARNING] INVALID_PCA in ftl_read\n");
